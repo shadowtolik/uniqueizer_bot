@@ -38,6 +38,7 @@ dp = Dispatcher()
 class Flow(StatesGroup):
     wait_video = State()   # ждём готовое видео
     wait_count = State()   # выбор числа версий
+    wait_geom = State()    # выбор режима геометрии
 
 
 def _allowed(user_id: int) -> bool:
@@ -49,6 +50,13 @@ def _count_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=str(n), callback_data=f"cnt:{n}") for n in choices
     ]])
+
+
+def _geom_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛡 Безопасно (без геометрии)", callback_data="geo:safe")],
+        [InlineKeyboardButton(text="⚡️ Агрессивно (зум+кроп+обрезка)", callback_data="geo:full")],
+    ])
 
 
 def _udir(user_id: int) -> Path:
@@ -122,34 +130,62 @@ async def on_video(msg: Message, state: FSMContext, bot: Bot):
 @dp.callback_query(Flow.wait_count, F.data.startswith("cnt:"))
 async def on_count(cb: CallbackQuery, state: FSMContext):
     n = int(cb.data.split(":", 1)[1])
-    await _run_uniquify(cb.message, state, cb.from_user.id, n)
+    await _ask_geom(cb.message, state, n)
     await cb.answer()
 
 
 @dp.message(Flow.wait_count, F.text.regexp(r"^\d+$"))
 async def on_count_typed(msg: Message, state: FSMContext):
-    n = int(msg.text)
-    await _run_uniquify(msg, state, msg.from_user.id, n)
+    await _ask_geom(msg, state, int(msg.text))
 
 
-async def _run_uniquify(msg: Message, state: FSMContext, uid: int, n: int):
+async def _ask_geom(msg: Message, state: FSMContext, n: int):
+    n = max(1, min(n, cfg.MAX_COUNT))
+    await state.update_data(uniq_n=n)
+    await state.set_state(Flow.wait_geom)
+    try:
+        await msg.edit_reply_markup(reply_markup=None)
+    except Exception:  # noqa: BLE001
+        pass
+    await msg.answer(
+        "Какой режим уникализации?\n"
+        "🛡 <b>Безопасно</b> — цвет/тон/зерно/скорость/метаданные. Кадр целиком, "
+        "субтитры и логотипы не режутся.\n"
+        "⚡️ <b>Агрессивно</b> — то же плюс зум+кроп и обрезка первых кадров: "
+        "сильнее сдвигает отпечаток, но подрезает края (не для вшитых субтитров).",
+        reply_markup=_geom_kb(),
+    )
+
+
+@dp.callback_query(Flow.wait_geom, F.data.startswith("geo:"))
+async def on_geom(cb: CallbackQuery, state: FSMContext):
+    geometry = cb.data.split(":", 1)[1] == "full"
+    data = await state.get_data()
+    n = int(data.get("uniq_n", 1))
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:  # noqa: BLE001
+        pass
+    await cb.answer()
+    await _run_uniquify(cb.message, state, cb.from_user.id, n, geometry)
+
+
+async def _run_uniquify(msg: Message, state: FSMContext, uid: int, n: int,
+                        geometry: bool):
     n = max(1, min(n, cfg.MAX_COUNT))
     src = _udir(uid) / "src.mp4"
     if not src.exists():
         await state.set_state(Flow.wait_video)
         await msg.answer("Видео потерялось — пришли его заново.")
         return
-    try:
-        await msg.edit_reply_markup(reply_markup=None)
-    except Exception:  # noqa: BLE001
-        pass
+    mode = "агрессивно (с геометрией)" if geometry else "безопасно"
     await msg.answer(
-        f"Делаю {n} уникальн{'ую версию' if n == 1 else 'ых версий'}… "
+        f"Делаю {n} уникальн{'ую версию' if n == 1 else 'ых версий'} — режим: {mode}… "
         "это может занять до пары минут."
     )
     base = f"uniq_{uid}_{int(time.time())}"
     try:
-        outs = await asyncio.to_thread(uniquify_file, src, cfg.OUT_DIR, base, n)
+        outs = await asyncio.to_thread(uniquify_file, src, cfg.OUT_DIR, base, n, geometry)
     except Exception as e:  # noqa: BLE001
         log.exception("uniquify failed")
         await msg.answer(f"Ошибка уникализации: {e}")
@@ -180,6 +216,9 @@ async def on_fallback(msg: Message, state: FSMContext):
     if cur == Flow.wait_count.state:
         await msg.answer("Выбери число версий кнопкой выше или пришли число.",
                          reply_markup=_count_kb())
+    elif cur == Flow.wait_geom.state:
+        await msg.answer("Выбери режим уникализации кнопкой выше.",
+                         reply_markup=_geom_kb())
     else:
         await msg.answer("Пришли видео для уникализации (как видео или файлом).")
 
