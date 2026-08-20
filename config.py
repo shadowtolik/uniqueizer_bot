@@ -42,6 +42,14 @@ def _load_token() -> str:
 
 BOT_TOKEN = _load_token()
 
+# Базовый URL Telegram Bot API. Пусто = облачный api.telegram.org (лимит на
+# скачивание входящих файлов — 20 МБ). Чтобы принимать файлы до 2 ГБ, подними
+# локальный сервер telegram-bot-api и укажи, например, http://localhost:8081
+TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "").strip()
+# Локальный сервер может отдавать file_path абсолютным путём на диске —
+# тогда скачивание не нужно, читаем файл напрямую (режим "local").
+TELEGRAM_API_LOCAL_MODE = os.environ.get("TELEGRAM_API_LOCAL_MODE", "0") in ("1", "true", "True")
+
 
 def _parse_ids(raw: str) -> set[int]:
     return {int(x) for x in raw.replace(",", " ").split() if x.strip().isdigit()}

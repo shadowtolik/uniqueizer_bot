@@ -11,11 +11,14 @@
 
 import asyncio
 import logging
+import shutil
 import time
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -88,12 +91,16 @@ async def _download(msg: Message, bot: Bot, dest: Path) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         tg_file = await bot.get_file(file_obj.file_id)
-        await bot.download_file(tg_file.file_path, destination=dest)
+        if cfg.TELEGRAM_API_LOCAL_MODE and tg_file.file_path and Path(tg_file.file_path).is_file():
+            # локальный Bot API (--local): файл уже лежит на диске, копируем
+            await asyncio.to_thread(shutil.copy, tg_file.file_path, dest)
+        else:
+            await bot.download_file(tg_file.file_path, destination=dest)
     except Exception as e:  # noqa: BLE001
         await msg.answer(
             f"Не смог скачать файл: {e}\n"
-            "Через облачный Bot API лимит загрузки — 20 МБ. Для больших файлов "
-            "нужен локальный Bot API сервer (см. README)."
+            "Через облачный Bot API лимит загрузки — 20 МБ. Для файлов больше "
+            "нужен локальный Bot API сервер (см. README)."
         )
         return False
     return True
@@ -182,9 +189,17 @@ async def main():
         raise SystemExit(
             "Нет токена бота. Задай TG_BOT_TOKEN или положи token.txt рядом с bot.py."
         )
-    bot = Bot(cfg.BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-    log.info("Уникализатор запущен. geometry=%s, choices=%s",
-             cfg.GEOMETRY, sorted(cfg.COUNT_CHOICES))
+    session = None
+    if cfg.TELEGRAM_API_BASE:
+        api = TelegramAPIServer.from_base(cfg.TELEGRAM_API_BASE,
+                                          is_local=cfg.TELEGRAM_API_LOCAL_MODE)
+        session = AiohttpSession(api=api)
+        log.info("Локальный Bot API: %s (local_mode=%s)",
+                 cfg.TELEGRAM_API_BASE, cfg.TELEGRAM_API_LOCAL_MODE)
+    bot = Bot(cfg.BOT_TOKEN, session=session,
+              default=DefaultBotProperties(parse_mode="HTML"))
+    log.info("Уникализатор запущен. geometry=%s, choices=%s, api=%s",
+             cfg.GEOMETRY, sorted(cfg.COUNT_CHOICES), cfg.TELEGRAM_API_BASE or "cloud")
     await dp.start_polling(bot)
 
 
