@@ -1,0 +1,20 @@
+# секреты
+token.txt
+.env
+
+# рабочие файлы и результаты
+work/
+out/
+*.log
+
+# статический ffmpeg (кладётся локально, не в репозиторий)
+bin/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# служебное
+.DS_Store
