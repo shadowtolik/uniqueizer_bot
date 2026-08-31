@@ -54,8 +54,8 @@ def _count_kb() -> InlineKeyboardMarkup:
 
 def _geom_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛡 Безопасно (без геометрии)", callback_data="geo:safe")],
-        [InlineKeyboardButton(text="⚡️ Агрессивно (зум+кроп+обрезка)", callback_data="geo:full")],
+        [InlineKeyboardButton(text="🛡 Безопасно (цвет+фильтры, без геометрии)", callback_data="geo:safe")],
+        [InlineKeyboardButton(text="⚡️ Жёстко (геометрия+поворот+фильтры)", callback_data="geo:full")],
     ])
 
 
@@ -149,10 +149,10 @@ async def _ask_geom(msg: Message, state: FSMContext, n: int):
         pass
     await msg.answer(
         "Какой режим уникализации?\n"
-        "🛡 <b>Безопасно</b> — цвет/тон/зерно/скорость/метаданные. Кадр целиком, "
-        "субтитры и логотипы не режутся.\n"
-        "⚡️ <b>Агрессивно</b> — то же плюс зум+кроп и обрезка первых кадров: "
-        "сильнее сдвигает отпечаток, но подрезает края (не для вшитых субтитров).",
+        "🛡 <b>Безопасно</b> — цвет/грейд/виньетка/тон/зерно/скорость + сдвиг тона "
+        "аудио/метаданные. Кадр целиком, субтитры и логотипы не режутся.\n"
+        "⚡️ <b>Жёстко</b> — то же плюс геометрия (зум+микро-поворот+кроп) и обрезка "
+        "первых кадров: сильнее сдвигает отпечаток, но подрезает края.",
         reply_markup=_geom_kb(),
     )
 

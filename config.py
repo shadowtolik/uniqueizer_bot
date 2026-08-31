@@ -75,6 +75,8 @@ H = int(os.environ.get("OUT_H", 1920))
 FPS = int(os.environ.get("OUT_FPS", 30))
 CRF = int(os.environ.get("OUT_CRF", 20))
 PRESET = os.environ.get("OUT_PRESET", "fast")
+# Пресет x264 для самой уникализации (качество некритично) — быстрее ре-энкод.
+UNIQ_PRESET = os.environ.get("UNIQ_PRESET", "veryfast")
 AUDIO_RATE = int(os.environ.get("OUT_AUDIO_RATE", 48000))
 
 # Нормализовать вход к W×H перед уникализацией. True — стабильные метаданные и
@@ -88,30 +90,40 @@ MAX_COUNT = int(os.environ.get("MAX_COUNT", 20))
 
 
 # --- Параметры уникализации -------------------------------------------------
-# «Сбалансированный» пресет: заметный сдвиг фингерпринта без видимой деградации.
-# geometry=True добавляет зум+кроп и обрезку кадров (сильнее уникализирует, но
-# может подрезать текст у краёв). Для видео с вшитыми субтитрами — geometry=False.
+# Жёсткий пресет: сильный сдвиг видео- и аудио-фингерпринта без видимой деградации
+# (против дедупа Instagram/TikTok). geometry=True добавляет зум+микро-поворот+кроп
+# и обрезку кадров; фильтры (colorbalance/vignette/eq/hue) и аудио-питч — всегда.
+# Для видео с текстом у самых краёв ставь geometry=False.
 UNIQUIFY = {
     "speed": (
         float(os.environ.get("UNIQ_SPEED_MIN", 0.97)),
         float(os.environ.get("UNIQ_SPEED_MAX", 1.03)),
     ),
-    "zoom": (1.01, 1.03),            # используется только при geometry=True
+    # --- геометрия (только при geometry=True) ---
+    "zoom": (1.05, 1.08),            # увеличение (поле под поворот/сдвиг)
+    "rotate": float(os.environ.get("UNIQ_ROTATE", 1.0)),   # ±градусы микро-поворота
+    "trim_frames": (2, 9),           # обрезка кадров с начала
+    # --- цвет/тон (умеренно, без видимого каста) ---
     "brightness": float(os.environ.get("UNIQ_BRIGHTNESS", 0.03)),
-    "contrast": float(os.environ.get("UNIQ_CONTRAST", 0.04)),
-    "saturation": float(os.environ.get("UNIQ_SATURATION", 0.06)),
+    "contrast": float(os.environ.get("UNIQ_CONTRAST", 0.05)),
+    "saturation": float(os.environ.get("UNIQ_SATURATION", 0.07)),
     "gamma": float(os.environ.get("UNIQ_GAMMA", 0.05)),
-    "hue": float(os.environ.get("UNIQ_HUE", 3.0)),     # ±градусы
-    "noise": (4, 8),                 # слабое зерно (alls)
-    "trim_frames": (2, 9),           # обрезка кадров с начала (geometry=True)
+    "hue": float(os.environ.get("UNIQ_HUE", 2.0)),     # ±градусы (больше — тонирует)
+    # --- фильтры-оверлеи (всегда, не режут кадр) ---
+    "colorbalance": float(os.environ.get("UNIQ_COLORBALANCE", 0.02)),  # сдвиг грейда
+    "vignette": (0.32, 0.50),        # угол виньетки, рад (МЕНЬШЕ = светлее)
+    "noise": (2, 5),                 # лёгкое зерно (сильное раздувает файл)
     "crf": (
-        int(os.environ.get("UNIQ_CRF_MIN", 20)),
-        int(os.environ.get("UNIQ_CRF_MAX", 24)),
+        int(os.environ.get("UNIQ_CRF_MIN", 21)),
+        int(os.environ.get("UNIQ_CRF_MAX", 25)),
     ),
+    # --- аудио: микро-сдвиг тона против аудио-хеша (на слух почти незаметно) ---
+    "pitch_cents": float(os.environ.get("UNIQ_PITCH_CENTS", 35)),  # ±центы
 }
 
-# По умолчанию без геометрии (безопасно для вшитых субтитров/логотипов).
-GEOMETRY = os.environ.get("UNIQ_GEOMETRY", "0") in ("1", "true", "True")
+# По умолчанию ЖЁСТКО — с геометрией (UNIQ_GEOMETRY=0 отключает для видео с
+# текстом у самых краёв).
+GEOMETRY = os.environ.get("UNIQ_GEOMETRY", "1") in ("1", "true", "True")
 
 
 # --- Лимиты Telegram --------------------------------------------------------

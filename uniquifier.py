@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import subprocess
 import uuid
@@ -109,28 +110,51 @@ def uniquify_once(video: Path, out: Path, geometry: bool | None = None) -> Path:
     noi = random.randint(*u["noise"])
     crf = random.randint(*u["crf"])
 
+    # фильтры-оверлеи (не режут кадр, безопасны для текста):
+    # colorbalance — случайный сдвиг грейда (тени/полутона/света; слабый, иначе
+    # получается цветовой каст), vignette — лёгкое затемнение углов.
+    cbv = u.get("colorbalance", 0.0)
+    cb = lambda: round(random.uniform(-cbv, cbv), 3)          # noqa: E731
+    colorbalance = (f"colorbalance=rs={cb()}:gs={cb()}:bs={cb()}:"
+                    f"rm={cb()}:gm={cb()}:bm={cb()}:rh={cb()}:gh={cb()}:bh={cb()},"
+                    if cbv else "")
+    vg = u.get("vignette")
+    vignette = f"vignette=angle={random.uniform(*vg):.3f}," if vg else ""
+
     geo = ""
     ss: list[str] = []
     if geometry:
         z = random.uniform(*u["zoom"])
-        ox, oy = random.random(), random.random()
+        rot = math.radians(random.uniform(-u.get("rotate", 0.0), u.get("rotate", 0.0)))
+        jx, jy = random.uniform(-0.3, 0.3), random.uniform(-0.3, 0.3)
         geo = (f"scale=iw*{z:.4f}:ih*{z:.4f},"
-               f"crop={cfg.W}:{cfg.H}:(iw-{cfg.W})*{ox:.3f}:(ih-{cfg.H})*{oy:.3f},")
+               f"rotate={rot:.5f}:fillcolor=black,"
+               f"crop={cfg.W}:{cfg.H}:(iw-{cfg.W})/2*(1+{jx:.3f}):(ih-{cfg.H})/2*(1+{jy:.3f}),")
         ss = ["-ss", f"{random.randint(*u['trim_frames']) / cfg.FPS:.3f}"]
 
     vf = (
-        f"{geo}"
+        f"{geo}{colorbalance}"
         f"eq=brightness={br:.3f}:contrast={co:.3f}:saturation={sa:.3f}:gamma={ga:.3f},"
-        f"hue=h={hu:.2f},noise=alls={noi}:allf=t,"
+        f"hue=h={hu:.2f},{vignette}noise=alls={noi}:allf=t,"
         f"setpts=PTS/{spd:.4f},format=yuv420p"
     )
+    # аудио: темп синхронно со скоростью видео + микро-сдвиг тона против аудио-хеша
+    # (asetrate меняет тон и темп, aresample возвращает частоту, atempo компенсирует
+    # темп до spd). На слух почти незаметно.
+    pc = u.get("pitch_cents", 0.0)
+    if pc:
+        r = 2 ** (random.uniform(-pc, pc) / 1200)
+        new_sr = int(round(cfg.AUDIO_RATE * r))
+        af = f"asetrate={new_sr},aresample={cfg.AUDIO_RATE},atempo={spd / r:.5f}"
+    else:
+        af = f"atempo={spd:.4f}"
     cmd = [
         cfg.FFMPEG, "-y", *ss, "-i", str(video),
-        "-vf", vf, "-af", f"atempo={spd:.4f}",
+        "-vf", vf, "-af", af,
         "-map_metadata", "-1",
         "-metadata", f"encoder=lavf-{random.randint(1000, 9999)}",
         "-metadata", f"comment={uuid.uuid4().hex[:16]}",
-        "-c:v", "libx264", "-crf", str(crf), "-preset", cfg.PRESET, *_SDR_TAGS,
+        "-c:v", "libx264", "-crf", str(crf), "-preset", cfg.UNIQ_PRESET, *_SDR_TAGS,
         "-c:a", "aac", "-ar", str(cfg.AUDIO_RATE), "-ac", "2",
         "-movflags", "+faststart", str(out),
     ]
