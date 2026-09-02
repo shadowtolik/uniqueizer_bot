@@ -119,7 +119,8 @@ def uniquify_once(video: Path, out: Path, geometry: bool | None = None) -> Path:
                     f"rm={cb()}:gm={cb()}:bm={cb()}:rh={cb()}:gh={cb()}:bh={cb()},"
                     if cbv else "")
     vg = u.get("vignette")
-    vignette = f"vignette=angle={random.uniform(*vg):.3f}," if vg else ""
+    # виньетка — только в жёстком режиме (geometry=True)
+    vignette = f"vignette=angle={random.uniform(*vg):.3f}," if (vg and geometry) else ""
 
     geo = ""
     ss: list[str] = []
