@@ -15,7 +15,7 @@ import shutil
 import time
 from pathlib import Path
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
@@ -24,6 +24,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+    TelegramObject,
 )
 
 import config as cfg
@@ -65,13 +66,82 @@ def _udir(user_id: int) -> Path:
     return d
 
 
-HELLO = (
-    "🔀 <b>Уникализатор видео</b>\n\n"
-    "Пришли готовое видео — верну несколько уникальных версий.\n"
-    "Меняю только цвет, тон, зерно, скорость и метаданные — субтитры, музыка "
-    "и кадрирование остаются как есть.\n\n"
-    "Пришли видео (как видео или файлом)."
+WELCOME = (
+    "👋 <b>Привет! Это уникализатор видео.</b>\n\n"
+    "Пришли готовый ролик — верну несколько <b>уникальных версий</b>, которые "
+    "площадки (Instagram/TikTok) не считают дублями друг друга.\n\n"
+    "Под капотом: сдвиг геометрии кадра, грейд/цвет, зерно, скорость, тон звука "
+    "и полная замена метаданных — на глаз качество не страдает.\n\n"
+    "📎 Пришли видео (как видео или файлом), дальше выберешь число версий и режим."
 )
+
+
+# --------------------------------------------------------------------------- #
+# Гейт по подписке на канал
+# --------------------------------------------------------------------------- #
+def _gate_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Подписаться на канал", url=cfg.SUB_CHANNEL_URL)],
+        [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")],
+    ])
+
+
+def _gate_text() -> str:
+    return ("🔒 <b>Доступ по подписке</b>\n\n"
+            "Чтобы пользоваться ботом, подпишись на наш канал:\n"
+            f"{cfg.SUB_CHANNEL_URL}\n\n"
+            "После подписки нажми «✅ Я подписался».")
+
+
+async def is_subscribed(bot: Bot, user_id: int) -> bool:
+    """Подписан ли пользователь на SUB_CHANNEL. Требует, чтобы бот был админом
+    канала. При ошибке проверки — по флагу SUB_FAIL_OPEN."""
+    if not cfg.REQUIRE_SUBSCRIPTION:
+        return True
+    try:
+        m = await bot.get_chat_member(cfg.SUB_CHANNEL, user_id)
+        return m.status in ("member", "administrator", "creator")
+    except Exception as e:  # noqa: BLE001
+        log.warning("Проверка подписки не удалась (%s): %s", cfg.SUB_CHANNEL, e)
+        return cfg.SUB_FAIL_OPEN
+
+
+class SubGate(BaseMiddleware):
+    """Не пускает в хендлеры, пока пользователь не подписан на канал.
+    Колбэк «check_sub» пропускается — он сам перепроверяет подписку."""
+    async def __call__(self, handler, event: TelegramObject, data: dict):
+        if not cfg.REQUIRE_SUBSCRIPTION:
+            return await handler(event, data)
+        if isinstance(event, CallbackQuery) and (event.data or "") == "check_sub":
+            return await handler(event, data)
+        user = data.get("event_from_user")
+        bot = data.get("bot")
+        if user is None or bot is None or await is_subscribed(bot, user.id):
+            return await handler(event, data)
+        # не подписан — показываем гейт, дальше не пускаем
+        if isinstance(event, CallbackQuery):
+            await event.answer()
+            target = event.message
+        else:
+            target = event
+        if target is not None:
+            await target.answer(_gate_text(), reply_markup=_gate_kb())
+        return None
+
+
+@dp.callback_query(F.data == "check_sub")
+async def on_check_sub(cb: CallbackQuery, state: FSMContext, bot: Bot):
+    if await is_subscribed(bot, cb.from_user.id):
+        await cb.answer("Спасибо! Доступ открыт ✅")
+        try:
+            await cb.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        await state.set_state(Flow.wait_video)
+        await cb.message.answer(WELCOME)
+    else:
+        await cb.answer("Пока не вижу подписки. Подпишись и нажми ещё раз.",
+                        show_alert=True)
 
 
 @dp.message(CommandStart())
@@ -81,7 +151,7 @@ async def on_start(msg: Message, state: FSMContext):
         return
     await state.clear()
     await state.set_state(Flow.wait_video)
-    await msg.answer(HELLO)
+    await msg.answer(WELCOME)
 
 
 @dp.message(Command("cancel"))
@@ -235,10 +305,14 @@ async def main():
         session = AiohttpSession(api=api)
         log.info("Локальный Bot API: %s (local_mode=%s)",
                  cfg.TELEGRAM_API_BASE, cfg.TELEGRAM_API_LOCAL_MODE)
+    if cfg.REQUIRE_SUBSCRIPTION:
+        dp.message.middleware(SubGate())
+        dp.callback_query.middleware(SubGate())
     bot = Bot(cfg.BOT_TOKEN, session=session,
               default=DefaultBotProperties(parse_mode="HTML"))
-    log.info("Уникализатор запущен. geometry=%s, choices=%s, api=%s",
-             cfg.GEOMETRY, sorted(cfg.COUNT_CHOICES), cfg.TELEGRAM_API_BASE or "cloud")
+    log.info("Уникализатор запущен. geometry=%s, choices=%s, api=%s, gate=%s",
+             cfg.GEOMETRY, sorted(cfg.COUNT_CHOICES), cfg.TELEGRAM_API_BASE or "cloud",
+             cfg.SUB_CHANNEL if cfg.REQUIRE_SUBSCRIPTION else "off")
     await dp.start_polling(bot)
 
 

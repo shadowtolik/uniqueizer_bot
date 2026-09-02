@@ -59,6 +59,24 @@ def _parse_ids(raw: str) -> set[int]:
 ALLOWED_USER_IDS: set[int] = _parse_ids(os.environ.get("ALLOWED_USER_IDS", ""))
 
 
+# --- Гейт по подписке на канал (для публичного инстанса) --------------------
+# Выключено по умолчанию. Чтобы пускать только подписчиков канала: задай
+# REQUIRE_SUBSCRIPTION=1 и SUB_CHANNEL (напр. @chatplaceio).
+# ⚠️ Бот ДОЛЖЕН быть администратором канала — иначе не сможет проверять подписку.
+SUB_CHANNEL = os.environ.get("SUB_CHANNEL", "").strip()          # напр. @chatplaceio
+SUB_CHANNEL_URL = os.environ.get("SUB_CHANNEL_URL", "").strip()  # напр. https://t.me/chatplaceio
+REQUIRE_SUBSCRIPTION = (
+    os.environ.get("REQUIRE_SUBSCRIPTION", "0") in ("1", "true", "True")
+    and bool(SUB_CHANNEL)
+)
+# Если канал в SUB_CHANNEL, а URL не задан — соберём ссылку из username.
+if SUB_CHANNEL and not SUB_CHANNEL_URL:
+    SUB_CHANNEL_URL = "https://t.me/" + SUB_CHANNEL.lstrip("@")
+# Поведение, если проверку подписки выполнить не удалось (бот не админ и т.п.):
+# 0 = не пускать (по умолчанию), 1 = пропускать (fail-open).
+SUB_FAIL_OPEN = os.environ.get("SUB_FAIL_OPEN", "0") in ("1", "true", "True")
+
+
 # --- ffmpeg -----------------------------------------------------------------
 # По умолчанию системный ffmpeg/ffprobe. Можно указать пути через окружение.
 # Для HDR-исходников нужен ffmpeg со zscale/libzimg (в сборках homebrew и в
